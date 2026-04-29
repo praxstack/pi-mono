@@ -265,8 +265,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		try {
 			const client = new BedrockRuntimeClient(config);
 			const cacheRetention = resolveCacheRetention(options.cacheRetention);
-			const baseModelId = model.id;
-			const finalModelId = applyOpus1MSuffix(baseModelId, options.enable1MContext ?? false, baseModelId);
+			const finalModelId = applyOpus1MSuffix(model.id, options.enable1MContext ?? false);
 			let commandInput = {
 				modelId: finalModelId,
 				messages: convertMessages(context, model, cacheRetention),
@@ -577,14 +576,10 @@ export function supportsOpus1MContext(modelId: string): boolean {
  * Idempotently append the ":1m" inference-profile suffix to an Opus 4.6/4.7
  * model id when the user has opted into the 1M context beta. Safe to call
  * multiple times; non-eligible models are returned unchanged.
- *
- * `baseModelId` is used for eligibility checks so that callers that already
- * routed the id through regional/global prefixes (e.g.,
- * "us.anthropic.claude-opus-4-7") still pick the right behavior.
  */
-export function applyOpus1MSuffix(modelId: string, enable1M: boolean, baseModelId: string): string {
+export function applyOpus1MSuffix(modelId: string, enable1M: boolean): string {
 	if (!enable1M) return modelId;
-	if (!supportsOpus1MContext(baseModelId)) return modelId;
+	if (!supportsOpus1MContext(modelId)) return modelId;
 	if (modelId.endsWith(":1m")) return modelId;
 	return `${modelId}:1m`;
 }
@@ -976,67 +971,52 @@ function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
 ): Record<string, any> | undefined {
-	const want1MBeta = (options.enable1MContext ?? false) && supportsOpus1MContext(model.id);
+	const result: Record<string, any> = {};
+	const betaFlags: string[] = [];
 
-	if (!options.reasoning || !model.reasoning) {
-		// Still emit the 1M beta header on eligible Opus models even when
-		// reasoning is not requested.
-		if (want1MBeta) {
-			return { anthropic_beta: ["context-1m-2025-08-07"] };
-		}
-		return undefined;
+	const want1MBeta = (options.enable1MContext ?? false) && supportsOpus1MContext(model.id);
+	if (want1MBeta) {
+		betaFlags.push("context-1m-2025-08-07");
 	}
 
-	if (isAnthropicClaudeModel(model)) {
+	if (options.reasoning && model.reasoning && isAnthropicClaudeModel(model)) {
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
 		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
-		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
-			? {
-					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
-					output_config: { effort: mapThinkingLevelToEffort(options.reasoning, model.id, model.name) },
-				}
-			: (() => {
-					const defaultBudgets: Record<ThinkingLevel, number> = {
-						minimal: 1024,
-						low: 2048,
-						medium: 8192,
-						high: 16384,
-						xhigh: 16384, // Claude doesn't support xhigh, clamp to high
-					};
 
-					// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
-					const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
-					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
+		if (supportsAdaptiveThinking(model.id, model.name)) {
+			result.thinking = { type: "adaptive", ...(display !== undefined ? { display } : {}) };
+			result.output_config = { effort: mapThinkingLevelToEffort(options.reasoning, model.id, model.name) };
+		} else {
+			const defaultBudgets: Record<ThinkingLevel, number> = {
+				minimal: 1024,
+				low: 2048,
+				medium: 8192,
+				high: 16384,
+				xhigh: 16384, // Claude doesn't support xhigh, clamp to high
+			};
 
-					return {
-						thinking: {
-							type: "enabled",
-							budget_tokens: budget,
-							...(display !== undefined ? { display } : {}),
-						},
-					};
-				})();
+			// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
+			const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
+			const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 
-		const betaFlags: string[] = [];
-		if (!supportsAdaptiveThinking(model.id, model.name) && (options.interleavedThinking ?? true)) {
-			betaFlags.push("interleaved-thinking-2025-05-14");
+			result.thinking = {
+				type: "enabled",
+				budget_tokens: budget,
+				...(display !== undefined ? { display } : {}),
+			};
+
+			if (options.interleavedThinking ?? true) {
+				betaFlags.push("interleaved-thinking-2025-05-14");
+			}
 		}
-		if (want1MBeta) {
-			betaFlags.push("context-1m-2025-08-07");
-		}
-		if (betaFlags.length > 0) {
-			result.anthropic_beta = betaFlags;
-		}
-
-		return result;
 	}
 
-	if (want1MBeta) {
-		return { anthropic_beta: ["context-1m-2025-08-07"] };
+	if (betaFlags.length > 0) {
+		result.anthropic_beta = betaFlags;
 	}
 
-	return undefined;
+	return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function createImageBlock(mimeType: string, data: string) {
