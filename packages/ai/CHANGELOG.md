@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added four explicit Bedrock auth modes (`apikey`, `profile`, `credentials`, `default`) dispatched through a pure `resolveBedrockAuthMode` / `resolveBedrockClientInputs` helper, with a named `BedrockAuthError` raised on missing required inputs. Thanks @praxstack.
+- Added `awsBedrockEndpoint` option for VPC and custom Bedrock endpoints across all auth modes. Thanks @praxstack.
+- Added `enable1MContext` for Claude Opus 4.6 and 4.7: when enabled, the model id gets a `:1m` suffix and the `context-1m-2025-08-07` value is appended to `anthropic_beta`. Thanks @praxstack.
+- Exported `supportsOpus1MContext`, `applyOpus1MSuffix`, and `supportsAdaptiveThinking` helpers for provider consumers. Thanks @praxstack.
+
+### Changed
+
+- Changed `BedrockOptions` to carry Cline-parity fields (`awsAuthentication`, `awsBedrockApiKey`, `awsProfile`, `awsAccessKey`, `awsSecretKey`, `awsSessionToken`, `awsBedrockEndpoint`, `awsRegion`); legacy `bearerToken` / `profile` / `region` aliases still resolve. Thanks @praxstack.
+- Changed `AWS_BEDROCK_SKIP_AUTH=1` to also suppress bearer token and profile resolution so dummy-creds mode truly sends no auth. Thanks @praxstack.
+
+### Fixed
+
+- Fixed empty or whitespace-only Bedrock API keys (including the literal `"Bearer "`) to raise `BedrockAuthError` instead of silently producing `token: ""`. Thanks @praxstack.
+- Fixed Bedrock resolver env-var fallback to guard `process.env` access with `typeof process !== "undefined"` for browser compatibility. Thanks @praxstack.
+
 ## [0.70.6] - 2026-04-28
 
 ### Added
