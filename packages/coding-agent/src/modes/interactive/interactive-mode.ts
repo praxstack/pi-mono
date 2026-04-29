@@ -52,7 +52,6 @@ import {
 	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
-	getDocsPath,
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.js";
@@ -90,6 +89,7 @@ import { checkForNewPiVersion } from "../../utils/version-check.js";
 import { ArminComponent } from "./components/armin.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
+import { BedrockSetupFlow } from "./components/bedrock-setup-dialog.js";
 import { BorderedLoader } from "./components/bordered-loader.js";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.js";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.js";
@@ -4390,13 +4390,15 @@ export class InteractiveMode {
 			if (!credential) {
 				continue;
 			}
+			// bedrock-config is displayed identically to api_key in the auth UI —
+			// both are non-OAuth credentials from the user's perspective.
 			options.push({
 				id: providerId,
 				name:
 					credential.type === "oauth"
 						? (oauthNameById.get(providerId) ?? providerId)
 						: getApiKeyProviderDisplayName(providerId),
-				authType: credential.type,
+				authType: credential.type === "oauth" ? "oauth" : "api_key",
 			});
 		}
 
@@ -4449,7 +4451,7 @@ export class InteractiveMode {
 					if (providerOption.authType === "oauth") {
 						await this.showLoginDialog(providerOption.id, providerOption.name);
 					} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
-						this.showBedrockSetupDialog(providerOption.id, providerOption.name);
+						await this.showBedrockSetupDialog(providerOption.id, providerOption.name);
 					} else {
 						await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
 					}
@@ -4566,7 +4568,16 @@ export class InteractiveMode {
 		}
 	}
 
-	private showBedrockSetupDialog(providerId: string, providerName: string): void {
+	private async showBedrockSetupDialog(providerId: string, providerName: string): Promise<void> {
+		const previousModel = this.session.model;
+
+		const mountComponent = (component: Container) => {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(component);
+			this.ui.setFocus(component);
+			this.ui.requestRender();
+		};
+
 		const restoreEditor = () => {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
@@ -4574,24 +4585,26 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		};
 
-		const dialog = new LoginDialogComponent(
-			this.ui,
-			providerId,
-			() => restoreEditor(),
-			providerName,
-			"Amazon Bedrock setup",
-		);
-		dialog.showInfo([
-			theme.fg("text", "Amazon Bedrock uses AWS credentials instead of a single API key."),
-			theme.fg("text", "Configure an AWS profile, IAM keys, bearer token, or role-based credentials."),
-			theme.fg("muted", "See:"),
-			theme.fg("accent", `  ${path.join(getDocsPath(), "providers.md")}`),
-		]);
+		// MVP scope: the four feature toggles (cross-region inference, global
+		// inference, prompt cache, 1M-context) are NOT exposed here yet. They
+		// persist with Cline-parity defaults via buildBedrockAuthConfigFromSetup.
+		// Users who need non-default values can edit auth.json directly. A
+		// follow-up task can add the toggle UI without changing the storage
+		// shape, which already carries them.
+		const flow = new BedrockSetupFlow(this.ui, providerId, providerName, mountComponent, restoreEditor);
 
-		this.editorContainer.clear();
-		this.editorContainer.addChild(dialog);
-		this.ui.setFocus(dialog);
-		this.ui.requestRender();
+		try {
+			const config = await flow.run();
+			this.session.modelRegistry.authStorage.set(providerId, { type: "bedrock-config", ...config });
+			restoreEditor();
+			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
+		} catch (error: unknown) {
+			restoreEditor();
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			if (errorMsg !== "Setup cancelled" && errorMsg !== "Login cancelled") {
+				this.showError(`Failed to configure ${providerName}: ${errorMsg}`);
+			}
+		}
 	}
 
 	private async showApiKeyLoginDialog(providerId: string, providerName: string): Promise<void> {
