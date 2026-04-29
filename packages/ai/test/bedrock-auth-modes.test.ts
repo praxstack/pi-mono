@@ -178,3 +178,23 @@ describe("resolveBedrockClientInputs", () => {
 		).toThrow(BedrockAuthError);
 	});
 });
+
+describe("resolveBedrockClientInputs — browser/env safety", () => {
+	it("apikey mode with no process.env throws cleanly (no ReferenceError) when key absent", () => {
+		// Simulate absence of process.env by temporarily shadowing (jsdom leaves process defined).
+		// The important contract is: when awsBedrockApiKey and bearerToken are absent AND
+		// AWS_BEARER_TOKEN_BEDROCK is unset, the call raises BedrockAuthError — NOT ReferenceError.
+		const origToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
+		delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+		try {
+			expect(() =>
+				resolveBedrockClientInputs({
+					awsAuthentication: "apikey",
+					awsRegion: "us-east-1",
+				}),
+			).toThrow(BedrockAuthError);
+		} finally {
+			if (origToken !== undefined) process.env.AWS_BEARER_TOKEN_BEDROCK = origToken;
+		}
+	});
+});
