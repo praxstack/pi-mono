@@ -47,7 +47,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { createHttpProxyAgentsForTarget } from "../utils/node-http-proxy.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { resolveBedrockClientInputs } from "./amazon-bedrock-auth.ts";
+import { type ResolvedBedrockClientInputs, resolveBedrockClientInputs } from "./amazon-bedrock-auth.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -145,16 +145,26 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		// detection still picks "apikey" when only the env var is set — preserves
 		// the pre-refactor behavior of an implicit env-driven bearer token.
 		const envBearer = typeof process !== "undefined" ? process.env.AWS_BEARER_TOKEN_BEDROCK : undefined;
-		const resolved = resolveBedrockClientInputs({
-			awsAuthentication: options.awsAuthentication,
-			awsRegion: options.awsRegion ?? options.region,
-			awsBedrockApiKey: options.awsBedrockApiKey ?? options.bearerToken ?? envBearer,
-			awsProfile: options.awsProfile ?? options.profile,
-			awsAccessKey: options.awsAccessKey,
-			awsSecretKey: options.awsSecretKey,
-			awsSessionToken: options.awsSessionToken,
-			awsBedrockEndpoint: options.awsBedrockEndpoint,
-		});
+		// When AWS_BEDROCK_SKIP_AUTH=1 the SDK is pointed at an unauthenticated
+		// proxy and we force dummy creds below. Running the resolver here would
+		// surface BedrockAuthError in apikey mode just because a stale or empty
+		// AWS_BEARER_TOKEN_BEDROCK is on the shell — a dev-ergonomics regression
+		// over pre-refactor behavior. Short-circuit with a minimal inputs shape
+		// so downstream logic still has a region.
+		const skipAuth = typeof process !== "undefined" && process.env.AWS_BEDROCK_SKIP_AUTH === "1";
+
+		const resolved: ResolvedBedrockClientInputs = skipAuth
+			? { region: options.awsRegion ?? options.region ?? "us-east-1" }
+			: resolveBedrockClientInputs({
+					awsAuthentication: options.awsAuthentication,
+					awsRegion: options.awsRegion ?? options.region,
+					awsBedrockApiKey: options.awsBedrockApiKey ?? options.bearerToken ?? envBearer,
+					awsProfile: options.awsProfile ?? options.profile,
+					awsAccessKey: options.awsAccessKey,
+					awsSecretKey: options.awsSecretKey,
+					awsSessionToken: options.awsSessionToken,
+					awsBedrockEndpoint: options.awsBedrockEndpoint,
+				});
 
 		const config: BedrockRuntimeClientConfig = {};
 		if (resolved.profile) {
@@ -200,14 +210,17 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			// Support proxies that don't need authentication. Dummy creds always win
 			// over anything the auth resolver set above — existing behavior. The
 			// bearer token branch is also suppressed so the SDK doesn't attach an
-			// Authorization header to the proxy request.
-			if (process.env.AWS_BEDROCK_SKIP_AUTH === "1") {
+			// Authorization header to the proxy request. Profile is cleared for
+			// full symmetry: the SDK otherwise tries to resolve profile creds from
+			// the filesystem even when explicit credentials are supplied.
+			if (skipAuth) {
 				config.credentials = {
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
 				};
 				config.token = undefined;
 				config.authSchemePreference = undefined;
+				config.profile = undefined;
 			}
 
 			const proxyAgents = createHttpProxyAgentsForTarget(model.baseUrl);
