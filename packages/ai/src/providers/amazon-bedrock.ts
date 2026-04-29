@@ -109,6 +109,12 @@ export interface BedrockOptions extends StreamOptions {
 	awsBedrockEndpoint?: string;
 	/** Canonical Cline-parity region field. Alias for `region`. */
 	awsRegion?: string;
+	/** Opt into the 1M-token extended context beta for Opus 4.6/4.7.
+	 * When true on an eligible model, appends the ":1m" inference-profile
+	 * suffix to the model id and injects
+	 * `anthropic_beta: ["context-1m-2025-08-07"]` into the Converse request's
+	 * additionalModelRequestFields. No-op on non-eligible models. */
+	enable1MContext?: boolean;
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
@@ -276,8 +282,10 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			}
 			const cacheRetention = resolveCacheRetention(options.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
+			const baseModelId = model.id;
+			const finalModelId = applyOpus1MSuffix(baseModelId, options.enable1MContext ?? false, baseModelId);
 			let commandInput = {
-				modelId: model.id,
+				modelId: finalModelId,
 				messages: convertMessages(context, model, cacheRetention, options.env),
 				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention, options.env),
 				inferenceConfig: {
@@ -640,6 +648,30 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
 	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("fable-5"));
+}
+
+const OPUS_1M_BASE_IDS = ["opus-4-7", "opus-4-6"] as const;
+
+/** True when the given base (no regional prefix) model id is Opus 4.6 or 4.7. */
+export function supportsOpus1MContext(modelId: string): boolean {
+	if (!modelId) return false;
+	return OPUS_1M_BASE_IDS.some((b) => modelId.includes(b));
+}
+
+/**
+ * Idempotently append the ":1m" inference-profile suffix to an Opus 4.6/4.7
+ * model id when the user has opted into the 1M context beta. Safe to call
+ * multiple times; non-eligible models are returned unchanged.
+ *
+ * `baseModelId` is used for eligibility checks so that callers that already
+ * routed the id through regional/global prefixes (e.g.,
+ * "us.anthropic.claude-opus-4-7") still pick the right behavior.
+ */
+export function applyOpus1MSuffix(modelId: string, enable1M: boolean, baseModelId: string): string {
+	if (!enable1M) return modelId;
+	if (!supportsOpus1MContext(baseModelId)) return modelId;
+	if (modelId.endsWith(":1m")) return modelId;
+	return `${modelId}:1m`;
 }
 
 function mapThinkingLevelToEffort(
@@ -1061,7 +1093,14 @@ function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
 ): Record<string, any> | undefined {
+	const want1MBeta = (options.enable1MContext ?? false) && supportsOpus1MContext(model.id);
+
 	if (!options.reasoning || !model.reasoning) {
+		// Still emit the 1M beta header on eligible Opus models even when
+		// reasoning is not requested.
+		if (want1MBeta) {
+			return { anthropic_beta: ["context-1m-2025-08-07"] };
+		}
 		return undefined;
 	}
 
@@ -1096,11 +1135,22 @@ function buildAdditionalModelRequestFields(
 					};
 				})();
 
+		const betaFlags: string[] = [];
 		if (!supportsAdaptiveThinking(model.id, model.name) && (options.interleavedThinking ?? true)) {
-			result.anthropic_beta = ["interleaved-thinking-2025-05-14"];
+			betaFlags.push("interleaved-thinking-2025-05-14");
+		}
+		if (want1MBeta) {
+			betaFlags.push("context-1m-2025-08-07");
+		}
+		if (betaFlags.length > 0) {
+			result.anthropic_beta = betaFlags;
 		}
 
 		return result;
+	}
+
+	if (want1MBeta) {
+		return { anthropic_beta: ["context-1m-2025-08-07"] };
 	}
 
 	return undefined;
