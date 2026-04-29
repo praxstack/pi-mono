@@ -632,7 +632,7 @@ function getModelMatchCandidates(modelId: string, modelName?: string): string[] 
 	});
 }
 
-function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
+export function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
 	const candidates = getModelMatchCandidates(modelId, modelName);
 	return candidates.some(
 		(s) =>
