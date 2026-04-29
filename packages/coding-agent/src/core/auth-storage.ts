@@ -39,6 +39,65 @@ export type AuthStatus = {
 	label?: string;
 };
 
+export interface BedrockAuthConfig {
+	awsAuthentication: "apikey" | "profile" | "credentials" | "default";
+	awsRegion: string;
+	awsBedrockApiKey?: string;
+	awsProfile?: string;
+	awsAccessKey?: string;
+	awsSecretKey?: string;
+	awsSessionToken?: string;
+	awsBedrockEndpoint?: string;
+	awsUseCrossRegionInference: boolean;
+	awsUseGlobalInference: boolean;
+	awsBedrockUsePromptCache: boolean;
+	enable1MContext: boolean;
+}
+
+const VALID_BEDROCK_MODES = ["apikey", "profile", "credentials", "default"] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isBedrockAuthConfig(obj: Record<string, unknown>): obj is BedrockAuthConfig & Record<string, unknown> {
+	return (
+		typeof obj.awsAuthentication === "string" &&
+		(VALID_BEDROCK_MODES as readonly string[]).includes(obj.awsAuthentication)
+	);
+}
+
+/**
+ * Migrate a stored Bedrock credential to the canonical BedrockAuthConfig
+ * shape. Accepts:
+ *   - null/undefined                 → null
+ *   - legacy { type: "api_key", key } → BedrockAuthConfig in apikey mode
+ *   - existing BedrockAuthConfig      → passthrough (idempotent)
+ *   - anything else                   → null
+ */
+export function migrateLegacyBedrockAuth(input: unknown): BedrockAuthConfig | null {
+	if (input == null) return null;
+	if (!isRecord(input)) return null;
+
+	if (isBedrockAuthConfig(input)) {
+		return input as unknown as BedrockAuthConfig;
+	}
+
+	if (input.type === "api_key" && typeof input.key === "string") {
+		return {
+			awsAuthentication: "apikey",
+			awsBedrockApiKey: input.key,
+			awsRegion: typeof input.region === "string" ? input.region : "us-east-1",
+			awsUseCrossRegionInference: true,
+			awsUseGlobalInference: true,
+			awsBedrockUsePromptCache: true,
+			enable1MContext: false,
+		};
+	}
+
+	return null;
+}
+
 type LockResult<T> = {
 	result: T;
 	next?: string;
