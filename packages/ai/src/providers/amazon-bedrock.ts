@@ -265,9 +265,10 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		try {
 			const client = new BedrockRuntimeClient(config);
 			const cacheRetention = resolveCacheRetention(options.cacheRetention);
-			const finalModelId = applyOpus1MSuffix(model.id, options.enable1MContext ?? false);
+			const { modelId: strippedId, has1MSuffix } = stripOpus1MSuffix(model.id);
+			const enable1M = options.enable1MContext ?? has1MSuffix;
 			let commandInput = {
-				modelId: finalModelId,
+				modelId: strippedId,
 				messages: convertMessages(context, model, cacheRetention),
 				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention),
 				inferenceConfig: {
@@ -275,7 +276,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
 				toolConfig: convertToolConfig(context.tools, options.toolChoice),
-				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
+				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options, strippedId, enable1M),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
 			const nextCommandInput = await options?.onPayload?.(commandInput, model);
@@ -573,15 +574,22 @@ export function supportsOpus1MContext(modelId: string): boolean {
 }
 
 /**
- * Idempotently append the ":1m" inference-profile suffix to an Opus 4.6/4.7
- * model id when the user has opted into the 1M context beta. Safe to call
- * multiple times; non-eligible models are returned unchanged.
+ * Detect and strip the ":1m" user-facing suffix from a Bedrock model ID.
+ *
+ * The ":1m" suffix is a user-facing marker used by model pickers to signal
+ * that the 1M-context beta should be enabled (matches Cline's
+ * CLAUDE_SONNET_1M_SUFFIX convention). AWS Bedrock itself does NOT accept
+ * ":1m" as a valid model identifier — the beta is enabled via the
+ * `anthropic_beta: ["context-1m-2025-08-07"]` header in
+ * `additionalModelRequestFields`. Callers must strip the suffix before
+ * sending `modelId` on the wire.
+ *
+ * Returns the cleaned ID and whether the suffix was present (which signals
+ * 1M-context beta should be enabled).
  */
-export function applyOpus1MSuffix(modelId: string, enable1M: boolean): string {
-	if (!enable1M) return modelId;
-	if (!supportsOpus1MContext(modelId)) return modelId;
-	if (modelId.endsWith(":1m")) return modelId;
-	return `${modelId}:1m`;
+export function stripOpus1MSuffix(modelId: string): { modelId: string; has1MSuffix: boolean } {
+	if (!modelId.endsWith(":1m")) return { modelId, has1MSuffix: false };
+	return { modelId: modelId.slice(0, -":1m".length), has1MSuffix: true };
 }
 
 function mapThinkingLevelToEffort(
@@ -970,11 +978,13 @@ function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, option
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
+	wireModelId: string,
+	enable1M: boolean,
 ): Record<string, any> | undefined {
 	const result: Record<string, any> = {};
 	const betaFlags: string[] = [];
 
-	const want1MBeta = (options.enable1MContext ?? false) && supportsOpus1MContext(model.id);
+	const want1MBeta = enable1M && supportsOpus1MContext(wireModelId);
 	if (want1MBeta) {
 		betaFlags.push("context-1m-2025-08-07");
 	}
