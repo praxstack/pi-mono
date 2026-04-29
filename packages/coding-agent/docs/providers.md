@@ -210,6 +210,36 @@ export AWS_BEDROCK_SKIP_AUTH=1
 export AWS_BEDROCK_FORCE_HTTP1=1
 ```
 
+#### Interactive `/login` auth modes
+
+`pi /login` for Amazon Bedrock prompts a four-way mode radio, mode-specific fields, and a region. The selected configuration is stored in `~/.config/pi/auth.json` under the `bedrock-config` credential variant.
+
+##### API Key (bearer token)
+
+Paste the bearer token interactively or set `AWS_BEARER_TOKEN_BEDROCK` in the environment. Requires the `bedrock:CallWithBearerToken` IAM permission.
+
+##### AWS Profile
+
+Enter an AWS CLI profile name (leave empty for the default profile). Pi reads credentials from `~/.aws/credentials` / `~/.aws/config`.
+
+##### AWS Credentials
+
+Supply an explicit access key ID, secret access key, and optional session token (required for temporary STS / SSO credentials).
+
+##### Default Chain
+
+Let the AWS SDK resolve credentials from the environment, IMDS, ECS task role, SSO, or `AWS_WEB_IDENTITY_TOKEN_FILE`. No explicit input is collected.
+
+#### Features
+
+- **Cross-region inference** and **global inference profiles** are enabled by default. Model IDs are routed through the appropriate prefix (`us.`, `eu.`, `apac.`, `au.`, `jp.`, `global.`).
+- **Prompt caching** is enabled by default for Claude models.
+- **1M-context beta** is available on Claude Opus 4.6 and 4.7 via `enable1MContext`; Pi appends `:1m` to the model id and sends the `context-1m-2025-08-07` beta header.
+- **Adaptive thinking** is available on Opus 4.6 / 4.7 and Sonnet 4.6. Set `reasoning` to `"low"`, `"medium"`, or `"high"`.
+- **Custom VPC endpoint** via `awsBedrockEndpoint` (or `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`).
+
+Advanced toggles (`awsUseCrossRegionInference`, `awsUseGlobalInference`, `awsBedrockUsePromptCache`, `enable1MContext`) are not exposed in the interactive `/login` flow yet — edit `~/.config/pi/auth.json` directly to override the defaults.
+
 ### Cloudflare AI Gateway
 
 `CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug can be set as environment variables or in the API key credential's `env` object in `auth.json`.
@@ -233,6 +263,7 @@ AI Gateway authentication uses `CLOUDFLARE_API_KEY` as `cf-aig-authorization`. U
 | Inline BYOK | Cloudflare token plus upstream `Authorization` header | The request supplies the upstream provider key |
 
 For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
+
 
 ### Cloudflare Workers AI
 
