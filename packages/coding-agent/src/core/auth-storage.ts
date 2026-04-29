@@ -20,25 +20,6 @@ import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
-export type ApiKeyCredential = {
-	type: "api_key";
-	key: string;
-};
-
-export type OAuthCredential = {
-	type: "oauth";
-} & OAuthCredentials;
-
-export type AuthCredential = ApiKeyCredential | OAuthCredential;
-
-export type AuthStorageData = Record<string, AuthCredential>;
-
-export type AuthStatus = {
-	configured: boolean;
-	source?: "stored" | "runtime" | "environment" | "fallback" | "models_json_key" | "models_json_command";
-	label?: string;
-};
-
 export interface BedrockAuthConfig {
 	awsAuthentication: "apikey" | "profile" | "credentials" | "default";
 	awsRegion: string;
@@ -54,6 +35,34 @@ export interface BedrockAuthConfig {
 	enable1MContext: boolean;
 }
 
+export type ApiKeyCredential = {
+	type: "api_key";
+	key: string;
+};
+
+export type OAuthCredential = {
+	type: "oauth";
+} & OAuthCredentials;
+
+/**
+ * Bedrock-specific credential variant. Persists the full BedrockAuthConfig
+ * (AWS auth mode + region + mode-specific fields + feature toggles) rather
+ * than a single API key, since Bedrock has four distinct auth modes.
+ */
+export type BedrockAuthCredential = {
+	type: "bedrock-config";
+} & BedrockAuthConfig;
+
+export type AuthCredential = ApiKeyCredential | OAuthCredential | BedrockAuthCredential;
+
+export type AuthStorageData = Record<string, AuthCredential>;
+
+export type AuthStatus = {
+	configured: boolean;
+	source?: "stored" | "runtime" | "environment" | "fallback" | "models_json_key" | "models_json_command";
+	label?: string;
+};
+
 const VALID_BEDROCK_MODES = ["apikey", "profile", "credentials", "default"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,17 +76,31 @@ function isBedrockAuthConfig(obj: Record<string, unknown>): obj is BedrockAuthCo
 	);
 }
 
+function stripBedrockCredentialWrapper(obj: Record<string, unknown>): Record<string, unknown> {
+	const { type: _type, ...rest } = obj;
+	return rest;
+}
+
 /**
  * Migrate a stored Bedrock credential to the canonical BedrockAuthConfig
  * shape. Accepts:
- *   - null/undefined                 → null
- *   - legacy { type: "api_key", key } → BedrockAuthConfig in apikey mode
- *   - existing BedrockAuthConfig      → passthrough (idempotent)
- *   - anything else                   → null
+ *   - null/undefined                         → null
+ *   - legacy { type: "api_key", key }         → BedrockAuthConfig in apikey mode
+ *   - { type: "bedrock-config", ...config }   → unwrap to BedrockAuthConfig
+ *   - existing BedrockAuthConfig              → passthrough (idempotent)
+ *   - anything else                           → null
  */
 export function migrateLegacyBedrockAuth(input: unknown): BedrockAuthConfig | null {
 	if (input == null) return null;
 	if (!isRecord(input)) return null;
+
+	if (input.type === "bedrock-config") {
+		const stripped = stripBedrockCredentialWrapper(input);
+		if (isBedrockAuthConfig(stripped)) {
+			return stripped as unknown as BedrockAuthConfig;
+		}
+		return null;
+	}
 
 	if (isBedrockAuthConfig(input)) {
 		return input as unknown as BedrockAuthConfig;
