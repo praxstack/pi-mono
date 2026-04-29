@@ -110,12 +110,11 @@ export function resolveBedrockClientInputs(inputs: BedrockAuthInputs): ResolvedB
 
 	switch (mode) {
 		case "apikey": {
-			const raw = (
-				inputs.awsBedrockApiKey ??
-				inputs.bearerToken ??
-				process.env.AWS_BEARER_TOKEN_BEDROCK ??
-				""
-			).trim();
+			// Guard process access so browser builds don't ReferenceError on
+			// apikey mode when callers forward credentials explicitly. The env
+			// fallback is a Node-only convenience.
+			const envToken = typeof process !== "undefined" ? process.env.AWS_BEARER_TOKEN_BEDROCK : undefined;
+			const raw = (inputs.awsBedrockApiKey ?? inputs.bearerToken ?? envToken ?? "").trim();
 			const stripped = stripBearerPrefix(raw);
 			if (!stripped) {
 				throw new BedrockAuthError(
