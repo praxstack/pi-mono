@@ -688,6 +688,11 @@
 - Removed the discontinued Qwen CLI OAuth custom provider extension example ([#3832](https://github.com/badlogic/pi-mono/pull/3832) by [@4h9fbZ](https://github.com/4h9fbZ)).
 - Removed Google Gemini CLI and Google Antigravity built-in login, default model, documentation, and example extension support.
 
+### Added
+
+- Added an interactive `/login` flow for Amazon Bedrock with a four-way mode radio (API key / AWS Profile / AWS Credentials / Default Chain), followed by mode-specific fields and a region input. Thanks @praxstack.
+- Added a `bedrock-config` credential variant to `AuthStorage` carrying the full `BedrockAuthConfig`, plus a pure `migrateLegacyBedrockAuth` helper that idempotently migrates legacy `{ type: "api_key", key }` records into the new shape. Thanks @praxstack.
+
 ## [0.70.6] - 2026-04-28
 
 ### New Features
