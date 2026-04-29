@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import {
-	applyOpus1MSuffix,
 	type BedrockOptions,
 	streamBedrock,
+	stripOpus1MSuffix,
 	supportsOpus1MContext,
 } from "../src/providers/amazon-bedrock.js";
 import type { Context, Model } from "../src/types.js";
@@ -33,23 +33,38 @@ describe("bedrock — 1M context beta helpers", () => {
 		});
 	});
 
-	describe("applyOpus1MSuffix", () => {
-		it("adds :1m to eligible model when enabled", () => {
-			expect(applyOpus1MSuffix("anthropic.claude-opus-4-7", true)).toBe("anthropic.claude-opus-4-7:1m");
+	describe("stripOpus1MSuffix", () => {
+		it("strips :1m suffix from Opus 4.7", () => {
+			expect(stripOpus1MSuffix("anthropic.claude-opus-4-7:1m")).toEqual({
+				modelId: "anthropic.claude-opus-4-7",
+				has1MSuffix: true,
+			});
 		});
-		it("is idempotent on already-suffixed model", () => {
-			const once = applyOpus1MSuffix("anthropic.claude-opus-4-7", true);
-			const twice = applyOpus1MSuffix(once, true);
-			expect(twice).toBe(once);
+		it("strips :1m suffix from regional-prefixed model", () => {
+			expect(stripOpus1MSuffix("us.anthropic.claude-opus-4-7:1m")).toEqual({
+				modelId: "us.anthropic.claude-opus-4-7",
+				has1MSuffix: true,
+			});
 		});
-		it("skips when enable1M is false", () => {
-			expect(applyOpus1MSuffix("anthropic.claude-opus-4-7", false)).toBe("anthropic.claude-opus-4-7");
+		it("leaves non-:1m model IDs unchanged", () => {
+			expect(stripOpus1MSuffix("us.anthropic.claude-opus-4-7")).toEqual({
+				modelId: "us.anthropic.claude-opus-4-7",
+				has1MSuffix: false,
+			});
 		});
-		it("skips for non-eligible model even when enabled", () => {
-			expect(applyOpus1MSuffix("anthropic.claude-sonnet-4-6", true)).toBe("anthropic.claude-sonnet-4-6");
+		it("handles Sonnet variants too", () => {
+			expect(stripOpus1MSuffix("anthropic.claude-sonnet-4-6:1m")).toEqual({
+				modelId: "anthropic.claude-sonnet-4-6",
+				has1MSuffix: true,
+			});
 		});
-		it("respects regional prefix on modelId (both eligibility and output)", () => {
-			expect(applyOpus1MSuffix("us.anthropic.claude-opus-4-7", true)).toBe("us.anthropic.claude-opus-4-7:1m");
+		it("returns empty string unchanged", () => {
+			expect(stripOpus1MSuffix("")).toEqual({ modelId: "", has1MSuffix: false });
+		});
+		it("idempotent on already-stripped ID", () => {
+			const first = stripOpus1MSuffix("us.anthropic.claude-opus-4-7:1m");
+			const second = stripOpus1MSuffix(first.modelId);
+			expect(second).toEqual({ modelId: "us.anthropic.claude-opus-4-7", has1MSuffix: false });
 		});
 	});
 });
@@ -97,10 +112,18 @@ async function capturePayload(
 }
 
 describe("bedrock — enable1MContext integration (payload-level)", () => {
-	it("Opus 4.7 + enable1MContext=true sends :1m modelId and context-1m beta", async () => {
+	it("Opus 4.7 + enable1MContext=true sends unsuffixed modelId and context-1m beta", async () => {
 		const model = getModel("amazon-bedrock", "anthropic.claude-opus-4-7");
 		const payload = await capturePayload(model, { enable1MContext: true });
-		expect(payload.modelId).toBe("anthropic.claude-opus-4-7:1m");
+		expect(payload.modelId).toBe("anthropic.claude-opus-4-7");
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(["context-1m-2025-08-07"]);
+	});
+
+	it("Opus 4.7 with :1m suffix (picker form) strips suffix and enables 1M beta", async () => {
+		const baseModel = getModel("amazon-bedrock", "anthropic.claude-opus-4-7");
+		const suffixedModel: Model<"bedrock-converse-stream"> = { ...baseModel, id: `${baseModel.id}:1m` };
+		const payload = await capturePayload(suffixedModel);
+		expect(payload.modelId).toBe("anthropic.claude-opus-4-7");
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(["context-1m-2025-08-07"]);
 	});
 
@@ -111,7 +134,7 @@ describe("bedrock — enable1MContext integration (payload-level)", () => {
 		expect(payload.additionalModelRequestFields?.anthropic_beta ?? []).not.toContain("context-1m-2025-08-07");
 	});
 
-	it("Sonnet 4.6 + enable1MContext=true does NOT add :1m or 1M beta (non-eligible)", async () => {
+	it("Sonnet 4.6 + enable1MContext=true does NOT add 1M beta (non-eligible)", async () => {
 		const model = getModel("amazon-bedrock", "anthropic.claude-sonnet-4-6");
 		const payload = await capturePayload(model, { enable1MContext: true });
 		expect(payload.modelId).toBe("anthropic.claude-sonnet-4-6");
