@@ -43,6 +43,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { resolveBedrockClientInputs } from "./amazon-bedrock-auth.js";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
@@ -80,6 +81,24 @@ export interface BedrockOptions extends StreamOptions {
 	 * Set via AWS_BEARER_TOKEN_BEDROCK env var or pass directly.
 	 * @see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbedrock.html */
 	bearerToken?: string;
+	/** AWS authentication mode. Matches Cline's awsAuthentication field.
+	 * When set, chooses the auth branch explicitly instead of inferring from
+	 * which credential fields are populated. */
+	awsAuthentication?: "apikey" | "profile" | "credentials" | "default";
+	/** Canonical Cline-parity field for the Bedrock bearer token.
+	 * Alias for the pre-existing `bearerToken` field. */
+	awsBedrockApiKey?: string;
+	/** Canonical Cline-parity field for the AWS profile name.
+	 * Alias for the pre-existing `profile` field. */
+	awsProfile?: string;
+	/** Static AWS credentials (credentials mode). */
+	awsAccessKey?: string;
+	awsSecretKey?: string;
+	awsSessionToken?: string;
+	/** Custom VPC/proxy endpoint URL. Overrides the default regional endpoint. */
+	awsBedrockEndpoint?: string;
+	/** Canonical Cline-parity region field. Alias for `region`. */
+	awsRegion?: string;
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
@@ -112,9 +131,37 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 
 		const blocks = output.content as Block[];
 
-		const config: BedrockRuntimeClientConfig = {
-			profile: options.profile,
-		};
+		// Dispatch auth-related SDK fields via the shared resolver. Each auth mode
+		// populates only its own fields; the existing region/endpoint logic below
+		// stays authoritative. Bearer token resolution (including the
+		// AWS_BEARER_TOKEN_BEDROCK env fallback inside apikey mode) lives in the
+		// resolver. We forward the env var as the effective apikey so auto-mode
+		// detection still picks "apikey" when only the env var is set — preserves
+		// the pre-refactor behavior of an implicit env-driven bearer token.
+		const envBearer = typeof process !== "undefined" ? process.env.AWS_BEARER_TOKEN_BEDROCK : undefined;
+		const resolved = resolveBedrockClientInputs({
+			awsAuthentication: options.awsAuthentication,
+			awsRegion: options.awsRegion ?? options.region,
+			awsBedrockApiKey: options.awsBedrockApiKey ?? options.bearerToken ?? envBearer,
+			awsProfile: options.awsProfile ?? options.profile,
+			awsAccessKey: options.awsAccessKey,
+			awsSecretKey: options.awsSecretKey,
+			awsSessionToken: options.awsSessionToken,
+			awsBedrockEndpoint: options.awsBedrockEndpoint,
+		});
+
+		const config: BedrockRuntimeClientConfig = {};
+		if (resolved.profile) {
+			config.profile = resolved.profile;
+		}
+		if (resolved.credentials) {
+			config.credentials = resolved.credentials;
+		}
+		if (resolved.token) {
+			config.token = resolved.token;
+			config.authSchemePreference = resolved.authSchemePreference;
+		}
+
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasConfiguredProfile = hasConfiguredBedrockProfile();
 		const endpointRegion = getStandardBedrockEndpointRegion(model.baseUrl);
@@ -131,10 +178,6 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			config.endpoint = model.baseUrl;
 		}
 
-		// Resolve bearer token for Bedrock API key auth.
-		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
-		const useBearerToken = bearerToken !== undefined && process.env.AWS_BEDROCK_SKIP_AUTH !== "1";
-
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
 			// Region resolution: explicit option > env vars > SDK default chain.
@@ -148,12 +191,17 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				config.region = "us-east-1";
 			}
 
-			// Support proxies that don't need authentication
+			// Support proxies that don't need authentication. Dummy creds always win
+			// over anything the auth resolver set above — existing behavior. The
+			// bearer token branch is also suppressed so the SDK doesn't attach an
+			// Authorization header to the proxy request.
 			if (process.env.AWS_BEDROCK_SKIP_AUTH === "1") {
 				config.credentials = {
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
 				};
+				config.token = undefined;
+				config.authSchemePreference = undefined;
 			}
 
 			if (
@@ -188,9 +236,11 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				configuredRegion || (endpointRegion && useExplicitEndpoint ? endpointRegion : undefined) || "us-east-1";
 		}
 
-		if (useBearerToken) {
-			config.token = { token: bearerToken };
-			config.authSchemePreference = ["httpBearerAuth"];
+		// Honor an explicit awsBedrockEndpoint (VPC/proxy) only when the existing
+		// region/endpoint resolution hasn't already pinned a value. The standard
+		// endpoint pin above takes precedence when both are present.
+		if (!config.endpoint && resolved.endpoint) {
+			config.endpoint = resolved.endpoint;
 		}
 
 		try {
