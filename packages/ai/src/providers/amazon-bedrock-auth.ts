@@ -1,7 +1,12 @@
 export type BedrockAuthMode = "apikey" | "profile" | "credentials" | "default";
 
 export interface BedrockAuthInputs {
-	awsAuthentication?: BedrockAuthMode | string;
+	/**
+	 * AWS authentication mode. Typed as `string` rather than `BedrockAuthMode`
+	 * because inputs often come from untrusted config JSON. `resolveBedrockAuthMode`
+	 * narrows at runtime and falls through to inference on unknown values.
+	 */
+	awsAuthentication?: string;
 	awsRegion?: string;
 	awsBedrockApiKey?: string;
 	awsProfile?: string;
@@ -76,7 +81,11 @@ export class BedrockAuthError extends Error {
 
 function stripBearerPrefix(token: string): string {
 	const t = token.trim();
-	if (t.toLowerCase().startsWith("bearer ")) {
+	const lower = t.toLowerCase();
+	if (lower === "bearer") {
+		return "";
+	}
+	if (lower.startsWith("bearer ")) {
 		return t.slice(7).trim();
 	}
 	return t;
@@ -107,13 +116,14 @@ export function resolveBedrockClientInputs(inputs: BedrockAuthInputs): ResolvedB
 				process.env.AWS_BEARER_TOKEN_BEDROCK ??
 				""
 			).trim();
-			if (!raw) {
+			const stripped = stripBearerPrefix(raw);
+			if (!stripped) {
 				throw new BedrockAuthError(
 					"bedrock_auth_api_key_missing",
-					"Bedrock auth mode is 'apikey' but no key was provided and AWS_BEARER_TOKEN_BEDROCK is unset.",
+					"Bedrock auth mode is 'apikey' but no key was provided (or value was empty after stripping 'Bearer' prefix) and AWS_BEARER_TOKEN_BEDROCK is unset.",
 				);
 			}
-			result.token = { token: stripBearerPrefix(raw) };
+			result.token = { token: stripped };
 			result.authSchemePreference = ["httpBearerAuth"];
 			return result;
 		}
@@ -139,5 +149,9 @@ export function resolveBedrockClientInputs(inputs: BedrockAuthInputs): ResolvedB
 		}
 		case "default":
 			return result;
+		default: {
+			const _exhaustive: never = mode;
+			throw new Error(`Unhandled Bedrock auth mode: ${String(_exhaustive)}`);
+		}
 	}
 }

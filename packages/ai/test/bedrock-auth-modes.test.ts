@@ -159,4 +159,22 @@ describe("resolveBedrockClientInputs", () => {
 			}),
 		).toThrow(BedrockAuthError);
 	});
+	it("apikey mode with only Bearer prefix (no real token) throws", () => {
+		expect(() =>
+			resolveBedrockClientInputs({
+				awsAuthentication: "apikey",
+				awsBedrockApiKey: "Bearer ",
+				awsRegion: "us-east-1",
+			}),
+		).toThrow(BedrockAuthError);
+	});
+	it("apikey mode with whitespace-only token throws", () => {
+		expect(() =>
+			resolveBedrockClientInputs({
+				awsAuthentication: "apikey",
+				awsBedrockApiKey: "   ",
+				awsRegion: "us-east-1",
+			}),
+		).toThrow(BedrockAuthError);
+	});
 });
