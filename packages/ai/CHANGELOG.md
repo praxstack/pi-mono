@@ -6,8 +6,8 @@
 
 - Added four explicit Bedrock auth modes (`apikey`, `profile`, `credentials`, `default`) dispatched through a pure `resolveBedrockAuthMode` / `resolveBedrockClientInputs` helper, with a named `BedrockAuthError` raised on missing required inputs. Thanks @praxstack.
 - Added `awsBedrockEndpoint` option for VPC and custom Bedrock endpoints across all auth modes. Thanks @praxstack.
-- Added `enable1MContext` for Claude Opus 4.6 and 4.7: when enabled, the model id gets a `:1m` suffix and the `context-1m-2025-08-07` value is appended to `anthropic_beta`. Thanks @praxstack.
-- Exported `supportsOpus1MContext`, `applyOpus1MSuffix`, and `supportsAdaptiveThinking` helpers for provider consumers. Thanks @praxstack.
+- Added `enable1MContext` for Claude Opus 4.6 and 4.7: when enabled, `context-1m-2025-08-07` is appended to `additionalModelRequestFields.anthropic_beta`. The `:1m` suffix is a user-facing picker marker only — it is stripped before sending to Bedrock, which rejects the `:1m` form. Thanks @praxstack.
+- Exported `supportsOpus1MContext`, `stripOpus1MSuffix`, and `supportsAdaptiveThinking` helpers for provider consumers. Thanks @praxstack.
 
 ### Changed
 
