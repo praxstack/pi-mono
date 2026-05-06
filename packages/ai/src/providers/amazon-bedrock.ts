@@ -285,7 +285,58 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			}
 			const command = new ConverseStreamCommand(commandInput);
 
-			const response = await client.send(command, { abortSignal: options.signal });
+			// Retry only on pre-stream failures (client.send rejection) — once bytes are
+			// flowing we cannot safely re-invoke without duplicating output. This mirrors
+			// Cline's @withRetry(maxRetries: 4) on createMessage but lives inside the
+			// IIFE since streamBedrock returns an EventStream, not an async generator.
+			// Backoff: 100ms, 200ms, 400ms, 800ms (matches Cline default baseDelay=1000
+			// cap scaled down; SDK already retries 3x internally so total is ~12 attempts
+			// but retry-after hints from Bedrock are honored by the SDK's StandardRetryStrategy).
+			const retryableExceptions = new Set([
+				"ThrottlingException",
+				"ThrottledException",
+				"TooManyRequestsException",
+				"ServiceUnavailableException",
+				"InternalServerException",
+				"ModelNotReadyException",
+			]);
+			const maxRetries = 4;
+			const baseDelayMs = 100;
+			const sendWithRetry = async () => {
+				for (let attempt = 0; attempt < maxRetries; attempt++) {
+					try {
+						return await client.send(command, { abortSignal: options.signal });
+					} catch (err: unknown) {
+						const name = (err as { name?: string })?.name ?? "";
+						const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode ?? 0;
+						const isRetryable =
+							retryableExceptions.has(name) || status === 429 || (status >= 502 && status <= 504);
+						const isLast = attempt === maxRetries - 1;
+						if (!isRetryable || isLast) {
+							throw err;
+						}
+						const retryAfterHeader = (err as { $response?: { headers?: Record<string, string> } })?.$response
+							?.headers?.["retry-after"];
+						let delayMs = baseDelayMs * 2 ** attempt;
+						if (retryAfterHeader !== undefined) {
+							const parsed = Number.parseInt(retryAfterHeader, 10);
+							if (Number.isFinite(parsed)) {
+								// Cline convention: value > Date.now()/1000 = unix timestamp, else delta-seconds
+								delayMs = parsed > Date.now() / 1000 ? Math.max(0, parsed * 1000 - Date.now()) : parsed * 1000;
+							}
+						}
+						if (process.env.BEDROCK_RETRY_TRACE === "1") {
+							console.error(
+								`BEDROCK_RETRY: attempt=${attempt + 1}/${maxRetries} name=${name} status=${status} delayMs=${delayMs}`,
+							);
+						}
+						await new Promise((resolve) => setTimeout(resolve, delayMs));
+					}
+				}
+				// Unreachable — loop either returns or throws.
+				throw new Error("bedrock retry loop exited without resolution");
+			};
+			const response = await sendWithRetry();
 			if (response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
