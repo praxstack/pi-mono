@@ -68,7 +68,7 @@ describe("Bedrock thinking payload", () => {
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
-	it("maps xhigh reasoning to effort=max for Claude Opus 4.7", async () => {
+	it("maps xhigh reasoning to effort=xhigh for Claude Opus 4.7 (native xhigh support)", async () => {
 		const baseModel = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
 		const model: Model<"bedrock-converse-stream"> = {
 			...baseModel,
@@ -79,7 +79,7 @@ describe("Bedrock thinking payload", () => {
 		const payload = await capturePayload(model, { reasoning: "xhigh" });
 
 		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
-		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "max" });
+		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "xhigh" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
