@@ -16,7 +16,7 @@
  * changing the persisted shape — it already carries them.
  */
 
-import type { Container, TUI } from "@mariozechner/pi-tui";
+import type { Container, TUI } from "@earendil-works/pi-tui";
 import type { BedrockAuthConfig } from "../../../core/auth-storage.js";
 import {
 	type BedrockSetupInputs,
