@@ -82,6 +82,59 @@ function stripBedrockCredentialWrapper(obj: Record<string, unknown>): Record<str
 }
 
 /**
+ * Cline-parity defaults for the four boolean Bedrock toggles. Mirrors the
+ * constant in bedrock-setup-config.ts (which depends on this module so we
+ * can't import from there). Kept as a private const here for backfill.
+ */
+const BEDROCK_TOGGLE_DEFAULTS = {
+	awsUseCrossRegionInference: true,
+	awsUseGlobalInference: true,
+	awsBedrockUsePromptCache: true,
+	enable1MContext: false,
+} as const;
+
+/**
+ * Backfill missing or invalid-typed Bedrock toggle fields with their
+ * Cline-parity defaults. Endpoint normalises empty-string to undefined so
+ * an explicit blank gets dropped from the canonical shape.
+ *
+ * The migration helper routes every parsed-from-disk shape through this
+ * before returning, so the read result is always a canonical
+ * BedrockAuthConfig regardless of which historical layout produced the
+ * file. Round-trip property: `read(write(x)) == read(x)` for every input
+ * the migration helper accepts.
+ */
+function applyToggleDefaults(cfg: Record<string, unknown>): BedrockAuthConfig {
+	const region = typeof cfg.awsRegion === "string" && cfg.awsRegion.trim().length > 0 ? cfg.awsRegion : "us-east-1";
+	const endpointRaw = typeof cfg.awsBedrockEndpoint === "string" ? cfg.awsBedrockEndpoint : undefined;
+	const endpoint = endpointRaw && endpointRaw.length > 0 ? endpointRaw : undefined;
+	return {
+		awsAuthentication: cfg.awsAuthentication as BedrockAuthConfig["awsAuthentication"],
+		awsRegion: region,
+		awsBedrockApiKey: typeof cfg.awsBedrockApiKey === "string" ? cfg.awsBedrockApiKey : undefined,
+		awsProfile: typeof cfg.awsProfile === "string" ? cfg.awsProfile : undefined,
+		awsAccessKey: typeof cfg.awsAccessKey === "string" ? cfg.awsAccessKey : undefined,
+		awsSecretKey: typeof cfg.awsSecretKey === "string" ? cfg.awsSecretKey : undefined,
+		awsSessionToken: typeof cfg.awsSessionToken === "string" ? cfg.awsSessionToken : undefined,
+		awsBedrockEndpoint: endpoint,
+		awsUseCrossRegionInference:
+			typeof cfg.awsUseCrossRegionInference === "boolean"
+				? cfg.awsUseCrossRegionInference
+				: BEDROCK_TOGGLE_DEFAULTS.awsUseCrossRegionInference,
+		awsUseGlobalInference:
+			typeof cfg.awsUseGlobalInference === "boolean"
+				? cfg.awsUseGlobalInference
+				: BEDROCK_TOGGLE_DEFAULTS.awsUseGlobalInference,
+		awsBedrockUsePromptCache:
+			typeof cfg.awsBedrockUsePromptCache === "boolean"
+				? cfg.awsBedrockUsePromptCache
+				: BEDROCK_TOGGLE_DEFAULTS.awsBedrockUsePromptCache,
+		enable1MContext:
+			typeof cfg.enable1MContext === "boolean" ? cfg.enable1MContext : BEDROCK_TOGGLE_DEFAULTS.enable1MContext,
+	};
+}
+
+/**
  * Migrate a stored Bedrock credential to the canonical BedrockAuthConfig
  * shape. Accepts:
  *   - null/undefined                         → null
@@ -89,6 +142,10 @@ function stripBedrockCredentialWrapper(obj: Record<string, unknown>): Record<str
  *   - { type: "bedrock-config", ...config }   → unwrap to BedrockAuthConfig
  *   - existing BedrockAuthConfig              → passthrough (idempotent)
  *   - anything else                           → null
+ *
+ * Every accepted shape is run through applyToggleDefaults so missing or
+ * invalid-typed toggle fields get safely backfilled with Cline-parity
+ * defaults. Unknown future keys (e.g. awsFutureToggle) are dropped.
  */
 export function migrateLegacyBedrockAuth(input: unknown): BedrockAuthConfig | null {
 	if (input == null) return null;
@@ -97,25 +154,21 @@ export function migrateLegacyBedrockAuth(input: unknown): BedrockAuthConfig | nu
 	if (input.type === "bedrock-config") {
 		const stripped = stripBedrockCredentialWrapper(input);
 		if (isBedrockAuthConfig(stripped)) {
-			return stripped as unknown as BedrockAuthConfig;
+			return applyToggleDefaults(stripped);
 		}
 		return null;
 	}
 
 	if (isBedrockAuthConfig(input)) {
-		return input as unknown as BedrockAuthConfig;
+		return applyToggleDefaults(input);
 	}
 
 	if (input.type === "api_key" && typeof input.key === "string") {
-		return {
+		return applyToggleDefaults({
 			awsAuthentication: "apikey",
 			awsBedrockApiKey: input.key,
 			awsRegion: typeof input.region === "string" ? input.region : "us-east-1",
-			awsUseCrossRegionInference: true,
-			awsUseGlobalInference: true,
-			awsBedrockUsePromptCache: true,
-			enable1MContext: false,
-		};
+		});
 	}
 
 	return null;

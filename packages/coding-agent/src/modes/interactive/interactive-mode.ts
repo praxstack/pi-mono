@@ -4648,12 +4648,12 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		};
 
-		// MVP scope: the four feature toggles (cross-region inference, global
-		// inference, prompt cache, 1M-context) are NOT exposed here yet. They
-		// persist with Cline-parity defaults via buildBedrockAuthConfigFromSetup.
-		// Users who need non-default values can edit auth.json directly. A
-		// follow-up task can add the toggle UI without changing the storage
-		// shape, which already carries them.
+		// The five feature toggles (VPC endpoint, cross-region inference,
+		// global inference, prompt cache, 1M-context) are surfaced behind an
+		// "Advanced options?" gate inside BedrockSetupFlow. Picking "Skip"
+		// at the gate keeps Cline-parity defaults; picking "Customize"
+		// chains five sub-prompts that flow through to BedrockAuthConfig
+		// without changing the persisted shape.
 		const flow = new BedrockSetupFlow(this.ui, providerId, providerName, mountComponent, restoreEditor);
 
 		try {
