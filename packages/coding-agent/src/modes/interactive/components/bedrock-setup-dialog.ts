@@ -51,13 +51,25 @@ const REGION_PLACEHOLDER = "us-east-1";
  * coupling.
  */
 export class BedrockSetupFlow {
+	private readonly tui: TUI;
+	private readonly providerId: string;
+	private readonly providerName: string;
+	private readonly onMount: (component: Container) => void;
+	private readonly onUnmount: () => void;
+
 	constructor(
-		private readonly tui: TUI,
-		private readonly providerId: string,
-		private readonly providerName: string,
-		private readonly onMount: (component: Container) => void,
-		private readonly onUnmount: () => void,
-	) {}
+		tui: TUI,
+		providerId: string,
+		providerName: string,
+		onMount: (component: Container) => void,
+		onUnmount: () => void,
+	) {
+		this.tui = tui;
+		this.providerId = providerId;
+		this.providerName = providerName;
+		this.onMount = onMount;
+		this.onUnmount = onUnmount;
+	}
 
 	/**
 	 * Run the full flow. Resolves with the assembled `BedrockAuthConfig`, or
