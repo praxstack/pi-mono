@@ -220,9 +220,9 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
 				};
-				config.token = undefined;
-				config.authSchemePreference = undefined;
-				config.profile = undefined;
+				delete config.token;
+				delete config.authSchemePreference;
+				delete config.profile;
 			}
 
 			const proxyAgents = createHttpProxyAgentsForTarget(model.baseUrl);
