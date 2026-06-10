@@ -650,9 +650,9 @@ function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boo
 	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("fable-5"));
 }
 
-const OPUS_1M_BASE_IDS = ["opus-4-7", "opus-4-6"] as const;
+const OPUS_1M_BASE_IDS = ["opus-4-7", "opus-4-6", "opus-4-8", "fable-5"] as const;
 
-/** True when the given base (no regional prefix) model id is Opus 4.6 or 4.7. */
+/** True when the given base (no regional prefix) model id is Opus 4.6/4.7/4.8 or Fable 5. */
 export function supportsOpus1MContext(modelId: string): boolean {
 	if (!modelId) return false;
 	return OPUS_1M_BASE_IDS.some((b) => modelId.includes(b));
