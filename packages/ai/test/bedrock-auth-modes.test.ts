@@ -3,7 +3,7 @@ import {
 	BedrockAuthError,
 	resolveBedrockAuthMode,
 	resolveBedrockClientInputs,
-} from "../src/providers/amazon-bedrock-auth.js";
+} from "../src/providers/amazon-bedrock-auth.ts";
 
 describe("resolveBedrockAuthMode", () => {
 	it("returns 'apikey' when bearer token is set", () => {

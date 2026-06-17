@@ -163,7 +163,8 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		// AWS_BEARER_TOKEN_BEDROCK is on the shell — a dev-ergonomics regression
 		// over pre-refactor behavior. Short-circuit with a minimal inputs shape
 		// so downstream logic still has a region.
-		const skipAuth = typeof process !== "undefined" && getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
+		const skipAuth =
+			typeof process !== "undefined" && getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
 
 		const resolved: ResolvedBedrockClientInputs = skipAuth
 			? { region: options.awsRegion ?? options.region ?? "us-east-1" }
@@ -206,10 +207,9 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			config.endpoint = model.baseUrl;
 		}
 
-		// Resolve bearer token for Bedrock API key auth. (Retained alongside the
-		// resolver above: skipAuth gates the dummy-cred proxy branch + the
-		// getConfiguredBedrockCredentials override below.)
-		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
+		// Resolve bearer token for Bedrock API key auth. (skipAuth was resolved
+		// above, before the resolver short-circuit; it gates the dummy-cred proxy
+		// branch + the getConfiguredBedrockCredentials override below.)
 
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {

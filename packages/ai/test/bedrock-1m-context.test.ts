@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
+import { getModel } from "../src/models.ts";
 import {
 	type BedrockOptions,
 	streamBedrock,
 	stripOpus1MSuffix,
 	supportsOpus1MContext,
-} from "../src/providers/amazon-bedrock.js";
-import type { Context, Model } from "../src/types.js";
+} from "../src/providers/amazon-bedrock.ts";
+import type { Context, Model } from "../src/types.ts";
 
 describe("bedrock — 1M context beta helpers", () => {
 	describe("supportsOpus1MContext", () => {

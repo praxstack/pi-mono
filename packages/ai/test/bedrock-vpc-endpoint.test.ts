@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveBedrockClientInputs } from "../src/providers/amazon-bedrock-auth.js";
+import { resolveBedrockClientInputs } from "../src/providers/amazon-bedrock-auth.ts";
 
 describe("bedrock — VPC endpoint", () => {
 	it("awsBedrockEndpoint overrides default regional endpoint", () => {
