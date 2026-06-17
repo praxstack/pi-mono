@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateLegacyBedrockAuth } from "../src/core/auth-storage.js";
+import { migrateLegacyBedrockAuth } from "../src/core/auth-storage.ts";
 
 describe("migrateLegacyBedrockAuth", () => {
 	it("migrates legacy { type: 'api_key', key } to BedrockAuthConfig shape with Cline-parity defaults", () => {

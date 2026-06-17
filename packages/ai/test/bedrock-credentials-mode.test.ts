@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { resolveBedrockAuthMode, resolveBedrockClientInputs } from "../src/providers/amazon-bedrock-auth.js";
+import { resolveBedrockAuthMode, resolveBedrockClientInputs } from "../src/providers/amazon-bedrock-auth.ts";
 
 describe("bedrock credentials mode integration", () => {
 	it("maps explicit access+secret+session to SDK credentials shape", () => {

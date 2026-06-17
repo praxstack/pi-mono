@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { migrateLegacyBedrockAuth } from "../src/core/auth-storage.js";
-import { buildBedrockAuthConfigFromSetup } from "../src/core/bedrock-setup-config.js";
+import { migrateLegacyBedrockAuth } from "../src/core/auth-storage.ts";
+import { buildBedrockAuthConfigFromSetup } from "../src/core/bedrock-setup-config.ts";
 
 describe("buildBedrockAuthConfigFromSetup", () => {
 	it("apikey mode produces BedrockAuthConfig with awsBedrockApiKey and Cline-parity defaults", () => {

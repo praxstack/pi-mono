@@ -1,8 +1,8 @@
 import { BedrockRuntimeClient, ConversationRole } from "@aws-sdk/client-bedrock-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.js";
-import { streamBedrock } from "../src/providers/amazon-bedrock.js";
-import type { AssistantMessage, Context, ThinkingContent } from "../src/types.js";
+import { getModel } from "../src/models.ts";
+import { streamBedrock } from "../src/providers/amazon-bedrock.ts";
+import type { AssistantMessage, Context, ThinkingContent } from "../src/types.ts";
 
 /**
  * Build a fake response object that mimics the Bedrock Converse streaming
