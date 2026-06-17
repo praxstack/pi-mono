@@ -4,7 +4,7 @@
  * component so it can be unit-tested without pulling in the pi-tui runtime.
  */
 
-import type { BedrockAuthConfig } from "./auth-storage.js";
+import type { BedrockAuthConfig } from "./auth-storage.ts";
 
 export type BedrockSetupMode = "apikey" | "profile" | "credentials" | "default";
 

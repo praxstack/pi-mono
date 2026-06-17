@@ -17,15 +17,15 @@
  */
 
 import type { Container, TUI } from "@earendil-works/pi-tui";
-import type { BedrockAuthConfig } from "../../../core/auth-storage.js";
+import type { BedrockAuthConfig } from "../../../core/auth-storage.ts";
 import {
 	type BedrockSetupInputs,
 	type BedrockSetupMode,
 	buildBedrockAuthConfigFromSetup,
-} from "../../../core/bedrock-setup-config.js";
-import { theme } from "../theme/theme.js";
-import { ExtensionSelectorComponent } from "./extension-selector.js";
-import { LoginDialogComponent } from "./login-dialog.js";
+} from "../../../core/bedrock-setup-config.ts";
+import { theme } from "../theme/theme.ts";
+import { ExtensionSelectorComponent } from "./extension-selector.ts";
+import { LoginDialogComponent } from "./login-dialog.ts";
 
 /**
  * Labels for the four-way mode radio. These strings are what the user sees.

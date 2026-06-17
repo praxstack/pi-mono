@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { supportsAdaptiveThinking } from "../src/providers/amazon-bedrock.js";
+import { supportsAdaptiveThinking } from "../src/providers/amazon-bedrock.ts";
 
 describe("bedrock — adaptive thinking eligibility", () => {
 	it("Opus 4.7 is eligible", () => {
