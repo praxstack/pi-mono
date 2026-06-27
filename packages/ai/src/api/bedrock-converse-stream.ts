@@ -53,6 +53,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { type ResolvedBedrockClientInputs, resolveBedrockClientInputs } from "../providers/amazon-bedrock-auth.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -90,6 +91,30 @@ export interface BedrockOptions extends StreamOptions {
 	 * Set via AWS_BEARER_TOKEN_BEDROCK env var or pass directly.
 	 * @see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbedrock.html */
 	bearerToken?: string;
+	/** AWS authentication mode. Matches Cline's awsAuthentication field.
+	 * When set, chooses the auth branch explicitly instead of inferring from
+	 * which credential fields are populated. */
+	awsAuthentication?: "apikey" | "profile" | "credentials" | "default";
+	/** Canonical Cline-parity field for the Bedrock bearer token.
+	 * Alias for the pre-existing `bearerToken` field. */
+	awsBedrockApiKey?: string;
+	/** Canonical Cline-parity field for the AWS profile name.
+	 * Alias for the pre-existing `profile` field. */
+	awsProfile?: string;
+	/** Static AWS credentials (credentials mode). */
+	awsAccessKey?: string;
+	awsSecretKey?: string;
+	awsSessionToken?: string;
+	/** Custom VPC/proxy endpoint URL. Overrides the default regional endpoint. */
+	awsBedrockEndpoint?: string;
+	/** Canonical Cline-parity region field. Alias for `region`. */
+	awsRegion?: string;
+	/** Opt into the 1M-token extended context beta for Opus 4.6/4.7.
+	 * When true on an eligible model, appends the ":1m" inference-profile
+	 * suffix to the model id and injects
+	 * `anthropic_beta: ["context-1m-2025-08-07"]` into the Converse request's
+	 * additionalModelRequestFields. No-op on non-eligible models. */
+	enable1MContext?: boolean;
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
@@ -124,9 +149,48 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 		const blocks = output.content as Block[];
 
-		const config: BedrockRuntimeClientConfig = {
-			profile: options.profile || getProviderEnvValue("AWS_PROFILE", options.env),
-		};
+		// Dispatch auth-related SDK fields via the shared resolver. Each auth mode
+		// populates only its own fields; the existing region/endpoint logic below
+		// stays authoritative. Bearer token resolution (including the
+		// AWS_BEARER_TOKEN_BEDROCK env fallback inside apikey mode) lives in the
+		// resolver. We forward the env var as the effective apikey so auto-mode
+		// detection still picks "apikey" when only the env var is set — preserves
+		// the pre-refactor behavior of an implicit env-driven bearer token.
+		const envBearer = typeof process !== "undefined" ? process.env.AWS_BEARER_TOKEN_BEDROCK : undefined;
+		// When AWS_BEDROCK_SKIP_AUTH=1 the SDK is pointed at an unauthenticated
+		// proxy and we force dummy creds below. Running the resolver here would
+		// surface BedrockAuthError in apikey mode just because a stale or empty
+		// AWS_BEARER_TOKEN_BEDROCK is on the shell — a dev-ergonomics regression
+		// over pre-refactor behavior. Short-circuit with a minimal inputs shape
+		// so downstream logic still has a region.
+		const skipAuth =
+			typeof process !== "undefined" && getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
+
+		const resolved: ResolvedBedrockClientInputs = skipAuth
+			? { region: options.awsRegion ?? options.region ?? "us-east-1" }
+			: resolveBedrockClientInputs({
+					awsAuthentication: options.awsAuthentication,
+					awsRegion: options.awsRegion ?? options.region,
+					awsBedrockApiKey: options.awsBedrockApiKey ?? options.bearerToken ?? options.apiKey ?? envBearer,
+					awsProfile: options.awsProfile ?? options.profile ?? getProviderEnvValue("AWS_PROFILE", options.env),
+					awsAccessKey: options.awsAccessKey,
+					awsSecretKey: options.awsSecretKey,
+					awsSessionToken: options.awsSessionToken,
+					awsBedrockEndpoint: options.awsBedrockEndpoint,
+				});
+
+		const config: BedrockRuntimeClientConfig = {};
+		if (resolved.profile) {
+			config.profile = resolved.profile;
+		}
+		if (resolved.credentials) {
+			config.credentials = resolved.credentials;
+		}
+		if (resolved.token) {
+			config.token = resolved.token;
+			config.authSchemePreference = resolved.authSchemePreference;
+		}
+
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
 		const endpointRegion = getStandardBedrockEndpointRegion(model.baseUrl);
@@ -143,11 +207,9 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			config.endpoint = model.baseUrl;
 		}
 
-		// Resolve bearer token for Bedrock API key auth.
-		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
-		const bearerToken =
-			options.bearerToken || getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) || undefined;
-		const useBearerToken = bearerToken !== undefined && !skipAuth;
+		// Resolve bearer token for Bedrock API key auth. (skipAuth was resolved
+		// above, before the resolver short-circuit; it gates the dummy-cred proxy
+		// branch + the getConfiguredBedrockCredentials override below.)
 
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
@@ -165,12 +227,20 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				config.region = "us-east-1";
 			}
 
-			// Support proxies that don't need authentication
+			// Support proxies that don't need authentication. Dummy creds always win
+			// over anything the auth resolver set above — existing behavior. The
+			// bearer token branch is also suppressed so the SDK doesn't attach an
+			// Authorization header to the proxy request. Profile is cleared for
+			// full symmetry: the SDK otherwise tries to resolve profile creds from
+			// the filesystem even when explicit credentials are supplied.
 			if (skipAuth) {
 				config.credentials = {
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
 				};
+				delete config.token;
+				delete config.authSchemePreference;
+				delete config.profile;
 			}
 
 			const credentials = getConfiguredBedrockCredentials(options.env);
@@ -198,9 +268,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				configuredRegion || (endpointRegion && useExplicitEndpoint ? endpointRegion : undefined) || "us-east-1";
 		}
 
-		if (useBearerToken) {
-			config.token = { token: bearerToken };
-			config.authSchemePreference = ["httpBearerAuth"];
+		// Honor an explicit awsBedrockEndpoint (VPC/proxy) only when the existing
+		// region/endpoint resolution hasn't already pinned a value. The standard
+		// endpoint pin above takes precedence when both are present.
+		if (!config.endpoint && resolved.endpoint) {
+			config.endpoint = resolved.endpoint;
 		}
 
 		try {
@@ -211,8 +283,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			const cacheRetention = resolveCacheRetention(options.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
+			const { modelId: strippedId, has1MSuffix } = stripOpus1MSuffix(model.id);
+			const enable1M = options.enable1MContext ?? has1MSuffix;
 			let commandInput = {
-				modelId: model.id,
+				modelId: strippedId,
 				messages: convertMessages(context, model, cacheRetention, options.env),
 				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention, options.env),
 				inferenceConfig: {
@@ -220,7 +294,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
 				toolConfig: convertToolConfig(context.tools, options.toolChoice),
-				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
+				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options, strippedId, enable1M),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
 			const nextCommandInput = await options?.onPayload?.(commandInput, model);
@@ -552,7 +626,7 @@ function getModelMatchCandidates(modelId: string, modelName?: string): string[] 
 	});
 }
 
-function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
+export function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
 	const candidates = getModelMatchCandidates(modelId, modelName);
 	return candidates.some(
 		(s) =>
@@ -567,6 +641,33 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
 	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("fable-5"));
+}
+
+const OPUS_1M_BASE_IDS = ["opus-4-7", "opus-4-6", "opus-4-8", "fable-5"] as const;
+
+/** True when the given base (no regional prefix) model id is Opus 4.6/4.7/4.8 or Fable 5. */
+export function supportsOpus1MContext(modelId: string): boolean {
+	if (!modelId) return false;
+	return OPUS_1M_BASE_IDS.some((b) => modelId.includes(b));
+}
+
+/**
+ * Detect and strip the ":1m" user-facing suffix from a Bedrock model ID.
+ *
+ * The ":1m" suffix is a user-facing marker used by model pickers to signal
+ * that the 1M-context beta should be enabled (matches Cline's
+ * CLAUDE_SONNET_1M_SUFFIX convention). AWS Bedrock itself does NOT accept
+ * ":1m" as a valid model identifier — the beta is enabled via the
+ * `anthropic_beta: ["context-1m-2025-08-07"]` header in
+ * `additionalModelRequestFields`. Callers must strip the suffix before
+ * sending `modelId` on the wire.
+ *
+ * Returns the cleaned ID and whether the suffix was present (which signals
+ * 1M-context beta should be enabled).
+ */
+export function stripOpus1MSuffix(modelId: string): { modelId: string; has1MSuffix: boolean } {
+	if (!modelId.endsWith(":1m")) return { modelId, has1MSuffix: false };
+	return { modelId: modelId.slice(0, -":1m".length), has1MSuffix: true };
 }
 
 function mapThinkingLevelToEffort(
@@ -987,50 +1088,55 @@ function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, option
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
+	wireModelId: string,
+	enable1M: boolean,
 ): Record<string, any> | undefined {
-	if (!options.reasoning || !model.reasoning) {
-		return undefined;
+	const result: Record<string, any> = {};
+	const betaFlags: string[] = [];
+
+	const want1MBeta = enable1M && supportsOpus1MContext(wireModelId);
+	if (want1MBeta) {
+		betaFlags.push("context-1m-2025-08-07");
 	}
 
-	if (isAnthropicClaudeModel(model)) {
+	if (options.reasoning && model.reasoning && isAnthropicClaudeModel(model)) {
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
 		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
-		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
-			? {
-					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
-					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
-				}
-			: (() => {
-					const defaultBudgets: Record<ThinkingLevel, number> = {
-						minimal: 1024,
-						low: 2048,
-						medium: 8192,
-						high: 16384,
-						xhigh: 16384, // Claude doesn't support xhigh, clamp to high
-					};
 
-					// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
-					const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
-					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
+		if (supportsAdaptiveThinking(model.id, model.name)) {
+			result.thinking = { type: "adaptive", ...(display !== undefined ? { display } : {}) };
+			result.output_config = { effort: mapThinkingLevelToEffort(model, options.reasoning) };
+		} else {
+			const defaultBudgets: Record<ThinkingLevel, number> = {
+				minimal: 1024,
+				low: 2048,
+				medium: 8192,
+				high: 16384,
+				xhigh: 16384, // Claude doesn't support xhigh, clamp to high
+			};
 
-					return {
-						thinking: {
-							type: "enabled",
-							budget_tokens: budget,
-							...(display !== undefined ? { display } : {}),
-						},
-					};
-				})();
+			// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
+			const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
+			const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 
-		if (!supportsAdaptiveThinking(model.id, model.name) && (options.interleavedThinking ?? true)) {
-			result.anthropic_beta = ["interleaved-thinking-2025-05-14"];
+			result.thinking = {
+				type: "enabled",
+				budget_tokens: budget,
+				...(display !== undefined ? { display } : {}),
+			};
+
+			if (options.interleavedThinking ?? true) {
+				betaFlags.push("interleaved-thinking-2025-05-14");
+			}
 		}
-
-		return result;
 	}
 
-	return undefined;
+	if (betaFlags.length > 0) {
+		result.anthropic_beta = betaFlags;
+	}
+
+	return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function createImageBlock(mimeType: string, data: string) {
